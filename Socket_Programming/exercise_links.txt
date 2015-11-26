@@ -1,0 +1,13 @@
+Create primitive FTP client in language of your choice. Implementation should be capable of handling default ACTIVE mode (passive mode is optional)
+
+FTP spec
+http://www.ietf.org/rfc/rfc0959.txt
+
+FTP communication description:
+http://www.ncftp.com/libncftp/doc/ftp_overview.html
+
+RAW FTP commands list:
+http://www.nsftools.com/tips/RawFTP.htm
+
+return codes:
+https://en.wikipedia.org/wiki/List_of_FTP_server_return_codes
