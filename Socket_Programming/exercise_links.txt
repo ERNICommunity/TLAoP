@@ -11,3 +11,6 @@ http://www.nsftools.com/tips/RawFTP.htm
 
 return codes:
 https://en.wikipedia.org/wiki/List_of_FTP_server_return_codes
+
+Protocol implementation documentation:
+http://www.cs.cf.ac.uk/Dave/Internet/node119.html
