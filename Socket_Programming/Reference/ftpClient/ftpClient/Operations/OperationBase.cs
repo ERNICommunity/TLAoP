@@ -6,6 +6,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace ftpClient.Operations
@@ -27,47 +28,52 @@ namespace ftpClient.Operations
 
     abstract class OperationBase
     {
-        protected TcpClient dataClient;
+        protected TcpClient _dataClient;
+        protected Task<Tuple<int, string>> _deferredResponse;
+        protected CancellationTokenSource _cancelToken;
+
+        protected OperationBase()
+        {
+            _cancelToken = new CancellationTokenSource();
+        }
 
         public abstract FtpOperation Operation { get; }
 
         public abstract bool Init(ControlChannel controlClient, TransferMode mode);
 
         public abstract Task Process(ControlChannel controlClient);
+        
+        public abstract void Finish();
 
         protected abstract void ParseData(byte[] data, int size);
 
-        protected abstract void Finish();
-
-        protected async Task DownloadData(TcpClient dataClient)
+        protected Task DownloadData(TcpClient dataClient)
         {
-            await Task.Run(
+            return Task.Run(
                 () =>
                 {
                     var buffer = new byte[dataClient.ReceiveBufferSize];
                     int receivedSize;
-                    while ((receivedSize = dataClient.Client.Receive(buffer)) > 0)
+                    while (!_cancelToken.IsCancellationRequested && (receivedSize = dataClient.Client.Receive(buffer)) > 0)
                     {
                         ParseData(buffer, receivedSize);
-                    }
-
-                    Finish();
-                });
+                    }                    
+                }, _cancelToken.Token);
         }
 
-        protected async Task UploadData(TcpClient dataClient, Stream dataStream)
+        protected Task UploadData(TcpClient dataClient, Stream dataStream)
         {
-            await Task.Run(
+            return Task.Run(
                 () =>
                 {
                     var buffer = new byte[dataClient.SendBufferSize];
                     int readSize;
-                    while ((readSize = dataStream.Read(buffer, 0, buffer.Length)) > 0)
+                    
+                    while (!_cancelToken.IsCancellationRequested && (readSize = dataStream.Read(buffer, 0, buffer.Length)) > 0)
                     {
                         dataClient.Client.Send(buffer, readSize, SocketFlags.None);
                     }
-                    Finish();                                        
-                });
+                }, _cancelToken.Token);
         }
 
         protected TcpClient PrepareDataChannel(ControlChannel controlChannel, TransferMode mode, string operationCommand)
@@ -82,31 +88,42 @@ namespace ftpClient.Operations
                 var addressBytes = endPoint.Address.MapToIPv4().GetAddressBytes();
 
                 string response;
-                controlChannel.SendCommand($"PORT {addressBytes[0]},{addressBytes[1]},{addressBytes[2]},{addressBytes[3]},{endPoint.Port >> 8},{endPoint.Port & 0xff}", out response);
-                controlChannel.SendCommand(operationCommand, out response);
-                var dataClient = dataListener.AcceptTcpClient();
-                dataListener.Stop();
+                var respCode = controlChannel.SendCommand($"PORT {addressBytes[0]},{addressBytes[1]},{addressBytes[2]},{addressBytes[3]},{endPoint.Port >> 8},{endPoint.Port & 0xff}", out response, ReturnCodes.ActionCompleted);
 
+                TcpClient dataClient = null;
+                if (respCode < 300)
+                {
+                    _deferredResponse = controlChannel.SendCommandDeferred(operationCommand);
+                    dataClient = dataListener.AcceptTcpClient();
+                    dataListener.Stop();
+                }
                 return dataClient;
             }
             else
             {
                 string response;
-                controlChannel.SendCommand($"PASV", out response);
+                var returnCode = controlChannel.SendCommand($"PASV", out response, ReturnCodes.EnteringPassiveMode);
 
-                // extract address & port from response
-                var mx = Regex.Match(response, @"\d{1,3},\d{1,3},\d{1,3},\d{1,3},\d{1,3},\d{1,3}");
-                //mx.Success
-                var values = mx.Value.Split(',').Select(val => Convert.ToByte(val)).ToArray();
-                var addressBytes = values.Take(4).ToArray();
-                var ep = new IPEndPoint(new IPAddress(addressBytes), (values[4] << 8) + values[5]);
-                
-                dataClient = new TcpClient(new IPEndPoint(controlChannel.LocalEndPoint.Address, 0));
-                dataClient.Connect(ep);
+                if (returnCode == (int)ReturnCodes.EnteringPassiveMode)
+                {
+                    // extract address & port from response
+                    var mx = Regex.Match(response, @"\d{1,3},\d{1,3},\d{1,3},\d{1,3},\d{1,3},\d{1,3}");
+                    //mx.Success
+                    var values = mx.Value.Split(',').Select(val => Convert.ToByte(val)).ToArray();
+                    var addressBytes = values.Take(4).ToArray();
+                    var ep = new IPEndPoint(new IPAddress(addressBytes), (values[4] << 8) + values[5]);
 
-                controlChannel.SendCommand(operationCommand, out response);
+                    _dataClient = new TcpClient(new IPEndPoint(controlChannel.LocalEndPoint.Address, 0));
+                    _dataClient.Connect(ep);
 
-                return dataClient;
+                    _deferredResponse = controlChannel.SendCommandDeferred(operationCommand);
+                    return _dataClient;
+                }
+                else
+                {
+                    Console.WriteLine("Passive mode failed, attempt with active mode");
+                    return PrepareDataChannel(controlChannel, TransferMode.Active, operationCommand);
+                }               
             }
         }        
     }

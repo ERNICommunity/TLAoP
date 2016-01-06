@@ -39,7 +39,7 @@ namespace ftpClient.Operations
             }
 
             var command = $"STOR {_serverFileName}";
-            dataClient = PrepareDataChannel(controlClient, mode, command);
+            _dataClient = PrepareDataChannel(controlClient, mode, command);
 
             return true;            
         }
@@ -47,21 +47,28 @@ namespace ftpClient.Operations
         public override async Task Process(ControlChannel controlClient)
         {
             _stream = _fileInfo.OpenRead();
-            await UploadData(dataClient, _stream);
-            dataClient.Client.Close(5);
+
+            await UploadData(_dataClient, _stream);
+
+            if (_dataClient != null)
+            {
+                _dataClient.Client.Close(5);
+            }
+
+            await _deferredResponse;
         }
 
-        protected override void ParseData(byte[] data, int dataSize)
-        {            
-        }
-
-        protected override void Finish()
-        {
+        public override void Finish()
+        {   
             if (_stream != null)
             {
                 _stream.Dispose();
                 _stream = null;
-            }  
+            }
+        }
+
+        protected override void ParseData(byte[] data, int dataSize)
+        {            
         }
     }
 }

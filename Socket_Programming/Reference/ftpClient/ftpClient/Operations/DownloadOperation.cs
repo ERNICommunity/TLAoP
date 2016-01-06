@@ -41,15 +41,36 @@ namespace ftpClient.Operations
             }
 
             var command = $"RETR {_serverFileName}";
-            dataClient = PrepareDataChannel(controlClient, mode, command);
+            _dataClient = PrepareDataChannel(controlClient, mode, command);
 
             return true;            
         }
 
         public override async Task Process(ControlChannel controlClient)
         {
-            await DownloadData(dataClient);
-            dataClient.Client.Close(5);             
+            var operation = DownloadData(_dataClient);
+            await _deferredResponse;
+
+            if (!operation.IsCompleted)
+            {
+                await Task.Delay(1000);
+                _cancelToken.Cancel();
+            }
+        }
+
+        public override void Finish()
+        {
+            if (_dataClient != null)
+            {
+                _dataClient.Client.Close();
+            }
+
+            if (_stream != null)
+            {
+                _stream.Flush();
+                _stream.Dispose();
+                _stream = null;
+            }
         }
 
         protected override void ParseData(byte[] data, int dataSize)
@@ -65,16 +86,6 @@ namespace ftpClient.Operations
             }
 
             _stream.Write(data, 0, dataSize);
-        }
-
-        protected override void Finish()
-        {
-            if (_stream != null)
-            {
-                _stream.Flush();
-                _stream.Dispose();
-                _stream = null;
-            }
         }
     }
 }

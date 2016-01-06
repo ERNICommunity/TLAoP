@@ -30,26 +30,37 @@ namespace ftpClient.Operations
         public override bool Init(ControlChannel controlClient, TransferMode mode)
         {
             var command = "LIST" + (string.IsNullOrWhiteSpace(infoTargetName) ? string.Empty : " " + infoTargetName);
-            dataClient = PrepareDataChannel(controlClient, mode, command);
+            _dataClient = PrepareDataChannel(controlClient, mode, command);
 
             return true;            
         }
 
         public override async Task Process(ControlChannel controlClient)
         {
-            await DownloadData(dataClient);
-            dataClient.Client.Close(5);             
+            var operation = DownloadData(_dataClient);
+            await _deferredResponse;
+
+            if (!operation.IsCompleted)
+            {
+                await Task.Delay(1000);
+                _cancelToken.Cancel();
+            }          
+        }
+
+        public override void Finish()
+        {
+            if (_dataClient != null)
+            {
+                _dataClient.Client.Close();
+            }
+
+            Console.WriteLine(dirInfoData.ToString());
         }
 
         protected override void ParseData(byte[] data, int dataSize)
         {
             var infoFragment = Encoding.ASCII.GetString(data, 0, dataSize);
             dirInfoData.Append(infoFragment);
-        }
-
-        protected override void Finish()
-        {
-            Console.WriteLine(dirInfoData.ToString());
         }
     }
 }

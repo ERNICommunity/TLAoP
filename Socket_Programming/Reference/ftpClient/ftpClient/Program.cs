@@ -25,23 +25,40 @@ namespace ftpClient
             string login = string.Empty;
             string pass = string.Empty;
             string host = string.Empty;
-
-            if (args.Length == 1)
+            var correctParameters = args.Length == 1;
+            if (correctParameters)
             {
-                var connectString = args[0];
-                var passDelimiter = connectString.IndexOf(":");
-                var hostDelimiter = connectString.IndexOf("@");
+                try
+                {
+                    var connectString = args[0];
+                    var passDelimiter = connectString.IndexOf(":");
+                    var hostDelimiter = connectString.IndexOf("@");
 
-                login = connectString.Substring(0, passDelimiter);
-                pass = connectString.Substring(passDelimiter + 1, hostDelimiter - passDelimiter - 1);
-                host = connectString.Substring(hostDelimiter + 1, connectString.Length - hostDelimiter - 1);                 
+                    login = connectString.Substring(0, passDelimiter);
+                    pass = connectString.Substring(passDelimiter + 1, hostDelimiter - passDelimiter - 1);
+                    host = connectString.Substring(hostDelimiter + 1, connectString.Length - hostDelimiter - 1);
+                    correctParameters = !string.IsNullOrWhiteSpace(login) && !string.IsNullOrWhiteSpace(pass) && !string.IsNullOrWhiteSpace(host);
+                }
+                catch
+                {
+                    correctParameters = false;
+                }
+            }
+
+            if (!correctParameters)
+            {
+                Console.WriteLine("Incorrect parameter. Usage: ftpClient <login>:<password>@<host>");
+                return;
             }
 
             Console.WriteLine($"Connecting to: {host} using LOGIN: {login} & PASSWORD: {pass}");
 
             var mode = TransferMode.Active;
             var controlChannel = new ControlChannel();
-            controlChannel.Init(host, login, pass);
+            if (!controlChannel.Init(host, login, pass))
+            {
+                return;
+            }
 
             OperationBase currentOperation = null;
             string cmd = null;
@@ -51,6 +68,8 @@ namespace ftpClient
                 var cmdLine = Console.ReadLine();
                 var cmdParams = cmdLine.Split(' ');
                 cmd = cmdParams.Length > 0 ? cmdParams[0].ToLower() : string.Empty;
+
+                currentOperation = null;
 
                 switch (cmd)
                 {
@@ -97,7 +116,6 @@ namespace ftpClient
                                 Console.WriteLine($"Incorrect command usage! Type: DELETE remote_file_name");
                                 continue;
                             }
-                            currentOperation = null;
                             string response;
                             controlChannel.SendCommand($"DELE {cmdParams[1]}", out response);
                             break;
@@ -109,8 +127,7 @@ namespace ftpClient
                                 Console.WriteLine("Incorrect command usage! Type: MODE [a|p]");
                                 continue;
                             }
-                            currentOperation = null;
-
+                            
                             mode = cmdParams[1].ToLower() == "a" ? TransferMode.Active : TransferMode.Passive;
                             Console.WriteLine($"{mode.ToString().ToUpper()} data transfer mode set.");
                             break;
@@ -125,7 +142,6 @@ namespace ftpClient
 
                             string response;
                             controlChannel.SendCommand($"MKD {cmdParams[1]}", out response);
-                            currentOperation = null;
                             break;
                         }
                     case "rmdir":
@@ -138,7 +154,6 @@ namespace ftpClient
 
                             string response;
                             controlChannel.SendCommand($"RMD {cmdParams[1]}", out response);
-                            currentOperation = null;
                             break;
                         }
                     case "cd":
@@ -151,26 +166,24 @@ namespace ftpClient
 
                             string response;
                             controlChannel.SendCommand($"CWD {cmdParams[1]}", out response);
-                            currentOperation = null;
                             break;
                         }
                     case "cdup":
                         {
                             string response;
                             controlChannel.SendCommand($"CDUP", out response);
-                            currentOperation = null;
                             break;
                         }
                     case "site":
                         {
-                            if (cmdParams.Length != 2)
+                            if (cmdParams.Length > 2)
                             {
-                                Console.WriteLine($"Incorrect command usage! Type: SITE site_specific_command");
+                                Console.WriteLine($"Incorrect command usage! Type: SITE [site_specific_command]");
                                 continue;
                             }
 
                             string response;
-                            controlChannel.SendCommand($"SITE {cmdParams[1]}", out response);
+                            controlChannel.SendCommand($"SITE {(cmdParams.Length > 1 ? cmdParams[1] : string.Empty)}", out response);
                             currentOperation = null;
                             break;
                         }
@@ -181,21 +194,48 @@ namespace ftpClient
                             currentOperation = null;
                             break;
                         }
+                    case "help":
+                        {
+                            Console.WriteLine("List of supported commands:");
+                            Console.WriteLine("DIR(LS) [directory_name] - list content of the specified directory.");
+                            Console.WriteLine("RECV(GET) <server_file_name> [local_file_name] - download file from the server.");
+                            Console.WriteLine("SEND(PUT) <local_file_name> [server_file_name] - upload file to the server.");
+                            Console.WriteLine("DELETE <server_file_name> - delete file on the server.");
+                            Console.WriteLine("MODE <a|p> - set active or passive mode for the data channel.");
+                            Console.WriteLine("MKDIR <directory_name> - create directory on the server.");
+                            Console.WriteLine("RMDIR <directory_name> - remove directory on the server.");
+                            Console.WriteLine("CD <directory_name> - change current server directory.");
+                            Console.WriteLine("CDUP - change current server directory one level up.");
+                            Console.WriteLine("SITE [custom_parameter] - site specific command.");
+                            Console.WriteLine("QUIT - close ftpClient");
+                            break; 
+                        }
                     default:
                         {
-                            Console.WriteLine("Unknown command!");
+                            Console.WriteLine("Unknown command! Type HELP for the list of supported commands.");
                             break;
                         }
                 }
 
                 if (currentOperation != null && currentOperation.Init(controlChannel, mode))
                 {
-                    currentOperation.Process(controlChannel).Wait();
+                    try
+                    {
+                        currentOperation.Process(controlChannel).Wait();
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine(e);
+                    }
+                    finally
+                    {
+                        currentOperation.Finish();
+                    }
                 }
 
-            } while (cmd != "quit");
+            } while (cmd != "quit" && controlChannel.IsConnected);
 
             controlChannel.Close();            
-        }
+        }        
     }
 }
